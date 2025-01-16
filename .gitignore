@@ -45,3 +45,13 @@ dist
 
 es_http_ca.crt
 .env
+
+config/archives*
+parsed/archives*
+ocr_cache/archives*
+ocr_patch/archives*
+raw/archives*
+
+next_helper
+
+indexes/*.json

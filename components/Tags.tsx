@@ -2,10 +2,15 @@ import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import { ReactElement, useState, useEffect, useMemo } from 'react';
 import Popover from '@mui/material/Popover';
-import { ArticleCategory, ArticleType, TagType } from '../types';
-import { Tag } from '../backend/entities';
+import { Tag } from '../types';
 
-export default function Tags({ tags }: { tags: Tag[] }) {
+export default function Tags({
+  tags,
+  onClick,
+}: {
+  tags: Tag[];
+  onClick?: Function;
+}) {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [label, setLabel] = useState('');
 
@@ -23,30 +28,35 @@ export default function Tags({ tags }: { tags: Tag[] }) {
         disableRestoreFocus
         sx={{
           pointerEvents: 'none',
+          marginTop: '10px',
         }}
         anchorOrigin={{
           vertical: 'bottom',
-          horizontal: 'center',
+          horizontal: 'left',
         }}
       >
-        <Typography sx={{ p: 2 }}>{label}</Typography>
+        <Typography sx={{ p: 1 }}>{label}</Typography>
       </Popover>
 
       {tags.map((tag) => (
         <Chip
-          key={tag.id}
+          key={tag.type + '##' + tag.name}
           onMouseEnter={(event) => {
             setLabel(tag.type);
             setAnchorEl(event.currentTarget);
           }}
           onMouseLeave={handleClose}
-          onClick={() =>
-            window.open(
-              `/articles?tag=${encodeURIComponent(tag.name)}`,
-              '_blank',
-            )
-          }
-          sx={{ m: 0.3 }}
+          onClick={() => {
+            if (onClick) {
+              onClick(tag);
+            } else {
+              window.open(
+                `/articles?tag=${encodeURIComponent(tag.name)}`,
+                '_blank',
+              );
+            }
+          }}
+          sx={{ m: 0.3, lineHeight: '34px', float: 'left' }}
           label={tag.name}
         />
       ))}

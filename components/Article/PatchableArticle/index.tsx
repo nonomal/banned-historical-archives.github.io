@@ -13,14 +13,14 @@ import {
 } from '@mui/material';
 import { diff_match_patch, Diff } from 'diff-match-patch';
 import { ReactElement, useEffect, useMemo, useRef, useState } from 'react';
-import { setTextRange } from 'typescript';
-import { Article, Content, Comment } from '../../../backend/entities';
+import { Article, Content, Comment } from '../../../types';
 import {
   ContentPart,
   ContentType,
   PartDiff,
   CommentDiff,
   PatchV2,
+  ParserResult,
 } from '../../../types';
 import { bracket_left, bracket_right, md5 } from '../../../utils';
 import CommentEditor from './CommentEditor';
@@ -32,13 +32,15 @@ export default function PatchableArticle({
   comments,
   description,
   article,
+  articleId,
   publicationId,
   publicationName,
 }: {
+  articleId: string;
   description?: string;
   contents: Content[];
   comments: Comment[];
-  article: Article;
+  article: ParserResult;
   publicationName?: string;
   publicationId: string;
 }) {
@@ -189,16 +191,16 @@ export default function PatchableArticle({
           sx={{ width: 80, mt: 1 }}
           onClick={() => {
             const params = JSON.stringify({
-              articleId: article.id,
+              articleId: articleId,
               publicationId: publicationId,
               commitHash: commit_hash,
               patch: changes.current,
             });
             const url = `https://github.com/banned-historical-archives/banned-historical-archives.github.io/issues/new?title=${encodeURIComponent(
-              `[OCR patch]${article.title}[${publicationName}][${article.id}][${publicationId}]`,
+              `[OCR patch]${article.title}[${publicationName}][${articleId}][${publicationId}]`,
             )}&body=${encodeURIComponent(`{OCR补丁}
 ${params}
-请复制以上代码在对比选项中粘贴进行预览：https://banned-historical-archives.github.io/articles/${article.id}
+请复制以上代码在对比选项中粘贴进行预览：https://banned-historical-archives.github.io/articles/${articleId}
 `)}`;
             window.open(url, '_blank');
           }}
@@ -211,17 +213,17 @@ ${params}
             size="small"
             onClick={(e) => {
               const params = JSON.stringify({
-                articleId: article.id,
+                articleId: articleId,
                 publicationId: publicationId,
                 commitHash: commit_hash,
                 patch: changes.current,
               });
               const text = `{OCR补丁}
 ${params}
-请复制以上代码在对比选项中粘贴进行预览：https://banned-historical-archives.github.io/articles/${article.id}`;
+请复制以上代码在对比选项中粘贴进行预览：https://banned-historical-archives.github.io/articles/${articleId}`;
               navigator.clipboard.writeText(text);
               const url = `https://github.com/banned-historical-archives/banned-historical-archives.github.io/issues/new?title=${encodeURIComponent(
-                `[OCR patch]${article.title}[${publicationName}][${article.id}][${publicationId}]`,
+                `[OCR patch]${article.title}[${publicationName}][${articleId}][${publicationId}]`,
               )}`;
               window.open(url, '_blank');
               setPopoverContent(text);

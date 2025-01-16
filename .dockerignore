@@ -1,0 +1,36 @@
+.vscode
+.github
+/build
+/.next/
+/out/
+.git
+docs
+next_helper
+node_modules
+
+ocr_cache
+ocr_patch
+raw
+config
+test
+parsed
+
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+.env
+
+public/pdfjs-dist
+dist
+*.tsbuildinfo
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*

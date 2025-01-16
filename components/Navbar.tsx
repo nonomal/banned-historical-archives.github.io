@@ -73,7 +73,7 @@ const routes = [
     path: '/',
   },
   {
-    name: '文稿',
+    name: '文档',
     path: '/articles',
   },
   {
@@ -170,17 +170,16 @@ export default function Navbar() {
                 placeholder="全站搜索"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    if (location.hostname === 'localhost') {
-                      router.push({
-                        pathname: '/search/[keyword]',
-                        query: {
-                          keyword: inputValue,
-                        },
-                      });
+                    if (process?.env?.LOCAL_SEARCH_ENGINE) {
+                      window.open(
+                        `${location.protocol}//${location.host}/search?keyword=` +
+                          encodeURIComponent(inputValue),
+                        '_blank',
+                      );
                       return;
                     }
                     window.open(
-                      'https://duckduckgo.com?q=' +
+                      'https://www.google.com/search?q=' +
                         encodeURIComponent(
                           'site:banned-historical-archives.github.io ' +
                             inputValue,

@@ -1,24 +1,26 @@
-import { ReactElement, useState, useEffect, useMemo } from 'react';
+import { ReactElement, useState, useEffect, useMemo, useRef } from 'react';
 import Popover from '@mui/material/Popover';
+import { zhCN } from '@mui/x-data-grid/locales';
 import Head from 'next/head';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import {
   DataGridPro,
   GridColDef,
+  GridFilterItem,
+  GridFilterModel,
   GridRenderCellParams,
-  GridValueGetterParams,
-  zhCN,
+  GridToolbar,
+  GridValueGetter,
+  useGridApiRef,
 } from '@mui/x-data-grid-pro';
 
 import Link from 'next/link';
 
 import Layout from '../../components/Layout';
-import Article from '../../backend/entity/article';
-import type Date from '../../backend/entity/date';
+import { Article, ArticleListV2, Date } from '../../types/index';
 
 import TextField from '@mui/material/TextField';
 import DialogTitle from '@mui/material/DialogTitle';
-import Grid from '@mui/material/Grid';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import Dialog from '@mui/material/Dialog';
@@ -27,7 +29,14 @@ import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import Stack from '@mui/material/Stack';
 import SettingsIcon from '@mui/icons-material/Settings';
-import { ArticleCategory, ArticleType, TagType } from '../../types';
+import {
+  ArticleCategory,
+  ArticleType,
+  ArticleList,
+  ArticleListItem,
+  TagIndexes,
+  TagType,
+} from '../../types';
 import Typography from '@mui/material/Typography';
 import {
   GetStaticProps,
@@ -35,36 +44,20 @@ import {
   GetServerSidePropsContext,
   GetStaticPropsContext,
 } from 'next';
-import { init } from '../../backend/data-source';
-import { Tag } from '../../backend/entities';
+import { Tag } from '../../types';
 import Tags from '../../components/Tags';
 import Authors from '../../components/Authors';
 import {
   DateFilter,
-  useDateFiletrDialog,
+  useDateFilterDialog,
 } from '../../components/useDateFilterDialog';
 import { useAuthorFilterDialog } from '../../components/useAuthorFilterDialog';
 import { useTagFilterDialog } from '../../components/useTagFilterDialog';
 import { useSourceFilterDialog } from '../../components/useSourceFilterDialog';
-
-export const getStaticProps: GetStaticProps = async (
-  context: GetStaticPropsContext,
-) => {
-  const AppDataSource = await init();
-  const articles = await AppDataSource.manager.find(Article, {
-    relations: {
-      authors: true,
-      publications: true,
-      tags: true,
-      dates: true,
-    },
-  });
-  return {
-    props: {
-      articles: JSON.parse(JSON.stringify(articles)),
-    },
-  };
-};
+import { readFile } from 'fs-extra';
+import { join } from 'path';
+import { Grid2, LinearProgress } from '@mui/material';
+import { getGridFilter } from '@mui/x-data-grid/internals';
 
 function ensure_two_digits(a?: number, fallback = '') {
   if (!a && a !== 0) {
@@ -73,186 +66,388 @@ function ensure_two_digits(a?: number, fallback = '') {
   return a < 10 ? `0${a}` : a;
 }
 
-const columns: GridColDef<Article>[] = [
-  {
-    field: 'title',
-    headerName: '标题',
-    minWidth: 350,
-    flex: 1,
-    renderCell: (params: GridRenderCellParams<string, Article>) => {
-      return (
-        <a href={`/articles/${params.row.id}`} rel="noreferrer" target="_blank">
-          {params.row!.title}
-        </a>
-      );
-    },
-  },
-  {
-    field: 'authors',
-    headerName: '作者',
-    minWidth: 150,
-    flex: 1,
-    valueGetter: (params: GridValueGetterParams<Article, Article>) =>
-      params.row.authors.map((i) => i.name).join(','),
-    renderCell: (params: GridRenderCellParams<string, Article>) => (
-      <div style={{ overflow: 'visible' }}>
-        <Authors authors={params.row.authors} />
-      </div>
-    ),
-  },
-  {
-    field: 'dates',
-    headerName: '时间',
-    description:
-      '可能包含多个时间点（起草时间，发布时间，子文稿时间等）或时间段',
-    minWidth: 150,
-    flex: 1,
-    valueGetter: (params: GridValueGetterParams<Article, Article>) =>
-      params.row.dates
-        .map((i) =>
-          i
-            ? [
-                i.year || '----',
-                ensure_two_digits(i.month, '--'),
-                ensure_two_digits(i.day, '--'),
-              ]
-                .filter((j) => j)
-                .join('/')
-            : '----/--/--',
-        )
-        .join(' '),
-    renderCell: (params: GridRenderCellParams<string, Article>) => (
-      <Stack spacing={1}>
-        {params.row!.is_range_date ? (
-          <Typography variant="caption">
-            {params
-              .row!.dates.map((i) =>
-                [i.year, ensure_two_digits(i.month), ensure_two_digits(i.day)]
-                  .filter((j) => j)
-                  .join('/'),
-              )
-              .sort((a, b) => (a > b ? 1 : -1))
-              .join('至')}
-          </Typography>
-        ) : (
-          params
-            .row!.dates.map((i) =>
-              [i.year, ensure_two_digits(i.month), ensure_two_digits(i.day)]
-                .filter((j) => j)
-                .join('/'),
-            )
-            .map((j) => (
-              <Typography key={j} variant="caption">
-                {j}
-              </Typography>
-            ))
-        )}
-      </Stack>
-    ),
-  },
-  {
-    field: 'publications',
-    headerName: '来源',
-    flex: 1,
-    minWidth: 150,
-    valueGetter: (params: GridValueGetterParams<Article, Article>) =>
-      params.row.publications.map((i) => i.name).join(','),
-  },
-  {
-    field: 'tags',
-    headerName: '标签',
-    minWidth: 150,
-    flex: 1,
-    sortComparator: (tags_a: string, tags_b: string) => {
-      return tags_a > tags_b ? 1 : -1;
-    },
-    valueGetter: (params: GridValueGetterParams<Article, Article>) =>
-      params.row.tags.map((i) => i.name).join(','),
-    renderCell: (params: GridRenderCellParams<string, Article>) => (
-      <div style={{ overflow: 'visible' }}>
-        <Tags tags={params.row.tags} />
-      </div>
-    ),
-  },
-];
-
 function date_include(a: Article, b: DateFilter) {
   const date_a = b.year_a! * 10000 + b.month_a! * 100 + b.day_a!;
   const date_b = b.year_b! * 10000 + b.month_b! * 100 + b.day_b!;
   if (a.is_range_date) {
     const range_a =
-      a.dates[0].year * 10000 +
+      a.dates[0].year! * 10000 +
       (a.dates[0].month || 0) * 100 +
       (a.dates[0].day || 0);
     const range_b =
-      a.dates[1].year * 10000 +
+      a.dates[1].year! * 10000 +
       (a.dates[1].month || 0) * 100 +
       (a.dates[1].day || 0);
     return range_a >= date_a && range_b <= date_b;
   } else {
     return a.dates.reduce((m, i) => {
-      const d = i.year * 10000 + (i.month || 0) * 100 + (i.day || 0);
+      const d = i.year! * 10000 + (i.month || 0) * 100 + (i.day || 0);
       return m && date_a <= d && date_b >= d;
     }, true);
   }
 }
 
-export default function Articles({ articles }: { articles: Article[] }) {
-  const tags_all = useMemo(() => {
-    const m = new Map<string, Tag>();
-    articles.forEach((i) =>
-      i.tags.forEach((j) => {
-        m.set(j.id, j);
-      }),
-    );
-    return m;
-  }, [articles]);
-  const tags_all_order_by_type = useMemo(() => {
-    const m = new Map<TagType, Map<string, Tag>>();
-    articles.forEach((i) =>
-      i.tags.forEach((j) => {
-        if (!m.get(j.type)) {
-          m.set(j.type, new Map());
-        }
-        m.get(j.type)!.set(j.id, j);
-      }),
-    );
-    return m;
-  }, [articles]);
-  const sources_all = useMemo(() => {
-    const set = new Set<string>();
-    articles.forEach((i) =>
-      i.publications.forEach((j) => j.name && set.add(j.name)),
-    );
-    return Array.from(set).sort();
-  }, [articles]);
+const default_date_filter = {
+  year_a: 1800,
+  year_b: 2200,
+  month_a: 1,
+  month_b: 12,
+  day_a: 1,
+  day_b: 31,
+};
 
-  const authors_all = useMemo(() => {
-    const set = new Set<string>();
-    articles.forEach((i) =>
-      i.authors.forEach((j) => j.name && set.add(j.name)),
-    );
-    return Array.from(set).sort();
-  }, [articles]);
+const default_sources = [
+  '毛泽东选集',
+  '毛泽东全集',
+  '毛泽东文集',
+  '中国文化大革命文库',
+];
+
+type TableArticle = {
+  id: string;
+  title: string;
+  authors: string[];
+  dates: any;
+  is_range_date: boolean;
+  books: string[];
+  tags: { name: string; type: string; id: string }[];
+};
+const default_authors = ['毛泽东', '江青', '王洪文', '张春桥', '姚文元'];
+export default function Articles() {
+  const [ready, setReady] = useState(false);
+  const apiRef = useGridApiRef();
+  const [filterModel, setFilterModel] = useState<GridFilterModel>({
+    items: [],
+  });
+  const filterModelRef = useRef<GridFilterModel>({ items: [] });
+
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    setFilterModel({
+      ...filterModel,
+      items:
+        typeof location !== 'undefined' && location.search
+          ? location.search.startsWith('?tag=')
+            ? [
+                {
+                  field: 'tags',
+                  operator: 'contains',
+                  value: decodeURIComponent(location.search.split('=')[1]),
+                },
+              ]
+            : location.search.startsWith('?author=')
+            ? [
+                {
+                  field: 'authors',
+                  operator: 'contains',
+                  value: decodeURIComponent(location.search.split('=')[1]),
+                },
+              ]
+            : []
+          : [],
+    });
+  }, []);
+
+  const columns = useRef<GridColDef[]>([
+    {
+      field: 'title',
+      headerName: '标题',
+      minWidth: 350,
+      flex: 1,
+      renderCell: (params: GridRenderCellParams<ArticleListItem>) => {
+        return (
+          <a
+            href={`/article?id=${encodeURIComponent(params.row.id)}`}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {params.row.title}
+          </a>
+        );
+      },
+    },
+    {
+      field: 'authors',
+      headerName: '作者',
+      minWidth: 150,
+      flex: 1,
+      valueGetter: (authors: string[]) => authors.map((i) => i).join(','),
+      renderCell: (params: GridRenderCellParams<ArticleListItem>) => (
+        <div style={{ overflow: 'scroll' }}>
+          <Authors
+            authors={params.row.authors}
+            onClick={(a: string) => {
+              const newFilter: GridFilterModel = {
+                ...filterModelRef.current,
+                items: [
+                  ...filterModelRef.current.items.filter(
+                    (i) => i.field != 'authors',
+                  ),
+                  {
+                    id: 'authors',
+                    field: 'authors',
+                    operator: 'contains',
+                    value: a,
+                  },
+                ],
+              };
+              setFilterModel(newFilter);
+              filterModelRef.current = newFilter;
+            }}
+          />
+        </div>
+      ),
+    },
+    {
+      field: 'dates',
+      headerName: '时间',
+      description:
+        '可能包含多个时间点（起草时间，发布时间，子文稿时间等）或时间段',
+      minWidth: 150,
+      flex: 1,
+      valueGetter: (dates: Date[]) =>
+        dates
+          .map((i) =>
+            i
+              ? [
+                  i.year || '----',
+                  ensure_two_digits(i.month, '--'),
+                  ensure_two_digits(i.day, '--'),
+                ]
+                  .filter((j) => j)
+                  .join('/')
+              : '----/--/--',
+          )
+          .join(' '),
+      renderCell: (params: GridRenderCellParams<ArticleListItem>) => (
+        <Stack spacing={1}>
+          {params.row.is_range_date ? (
+            <Typography variant="caption">
+              {params.row.dates
+                .map((i) =>
+                  [i.year, ensure_two_digits(i.month), ensure_two_digits(i.day)]
+                    .filter((j) => j)
+                    .join('/'),
+                )
+                .sort((a, b) => (a > b ? 1 : -1))
+                .join('至')}
+            </Typography>
+          ) : (
+            params
+              .row!.dates.map((i) =>
+                [i.year, ensure_two_digits(i.month), ensure_two_digits(i.day)]
+                  .filter((j) => j)
+                  .join('/'),
+              )
+              .map((j) => (
+                <Typography key={j} variant="caption">
+                  {j}
+                </Typography>
+              ))
+          )}
+        </Stack>
+      ),
+    },
+    {
+      field: 'publications',
+      headerName: '来源',
+      flex: 1,
+      minWidth: 150,
+      valueGetter: (_: any, row: ArticleListItem) => row.books!.join(','),
+      renderCell: (params: GridRenderCellParams<ArticleListItem>) => (
+        <div style={{ overflow: 'scroll', height: '100%' }}>
+          <Tags
+            tags={
+              params.row.books?.map((i) => ({
+                name: i,
+                type: '来源' as any,
+                id: i,
+              })) || []
+            }
+            onClick={(t: Tag) => {
+              const newFilter: GridFilterModel = {
+                ...filterModelRef.current,
+                items: [
+                  ...filterModelRef.current.items.filter(
+                    (i) => i.field != 'publications',
+                  ),
+                  {
+                    id: 'publications',
+                    field: 'publications',
+                    operator: 'contains',
+                    value: t.name,
+                  },
+                ],
+              };
+              setFilterModel(newFilter);
+              filterModelRef.current = newFilter;
+            }}
+          />
+        </div>
+      ),
+    },
+    {
+      field: 'tags',
+      headerName: '标签',
+      minWidth: 150,
+      flex: 1,
+      sortComparator: (tags_a: string, tags_b: string) => {
+        return tags_a > tags_b ? 1 : -1;
+      },
+      valueGetter: (tags: Tag[]) => tags.map((i) => i.name).join(','),
+      renderCell: (params: GridRenderCellParams<ArticleListItem>) => (
+        <div style={{ overflow: 'scroll', height: '100%' }}>
+          <Tags
+            tags={params.row.tags!}
+            onClick={(t: Tag) => {
+              const newFilter: GridFilterModel = {
+                ...filterModelRef.current,
+                items: [
+                  ...filterModelRef.current.items.filter(
+                    (i) => i.field != 'tags',
+                  ),
+                  {
+                    id: 'tags',
+                    field: 'tags',
+                    operator: 'contains',
+                    value: t.name,
+                  },
+                ],
+              };
+              setFilterModel(newFilter);
+              filterModelRef.current = newFilter;
+            }}
+          />
+        </div>
+      ),
+    },
+  ]);
+
+  const [allSources, setAllSources] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<{ name: string; type: string }[]>([]);
+  const [allAuthors, setAllAuthors] = useState<string[]>([]);
+  const [articles, setArticles] = useState<TableArticle[]>([]);
+  const articlesRef = useRef<TableArticle[]>([]);
+  const tagsSetRef = useRef(new Set<string>());
+  const sourcesSetRef = useRef(new Set<string>());
+  const authorsSetRef = useRef(new Set<string>());
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    (async () => {
+      const file_count: { article_list: number } = await (
+        await fetch(
+          'https://raw.githubusercontent.com/banned-historical-archives/banned-historical-archives.github.io/refs/heads/indexes/indexes/file_count.json',
+        )
+      ).json();
+      for (let i = 0; i < file_count.article_list; ++i) {
+        const article_list: ArticleListV2 = await (
+          await fetch(
+            `https://raw.githubusercontent.com/banned-historical-archives/banned-historical-archives.github.io/refs/heads/indexes/indexes/article_list_${i}.json`,
+          )
+        ).json();
+        for (const k of article_list.tags) {
+          const id = `${k.type}--${k.name}`;
+          if (!tagsSetRef.current.has(id)) {
+            tagsSetRef.current.add(id);
+          }
+        }
+        for (const k of article_list.books) {
+          if (!sourcesSetRef.current.has(k)) {
+            sourcesSetRef.current.add(k);
+          }
+        }
+        for (const k of article_list.articles) {
+          for (const a of k.authors) {
+            if (!authorsSetRef.current.has(a)) {
+              authorsSetRef.current.add(a);
+            }
+          }
+
+          articlesRef.current.push({
+            ...k,
+            // TODO
+            tags: Array.from(new Set(k.tag_ids)).map((t) => ({
+              ...article_list.tags[t],
+              id: `${article_list.tags[t].type}--${article_list.tags[t].name}`,
+            })),
+            books: k.book_ids.map((b) => article_list.books[b]),
+          });
+        }
+        if (i % 10 == 0) {
+          setArticles([...articlesRef.current]);
+          setAllAuthors(Array.from(authorsSetRef.current.keys()));
+          setAllSources(Array.from(sourcesSetRef.current.keys()));
+          setAllTags(
+            Array.from(tagsSetRef.current.keys()).map((x) => ({
+              id: x,
+              name: x.split('--')[1],
+              type: x.split('--')[0],
+            })),
+          );
+        }
+        setReady(true);
+        setProgress((i / (file_count.article_list - 1)) * 100);
+      }
+      setArticles([...articlesRef.current]);
+      setAllAuthors(Array.from(authorsSetRef.current.keys()));
+      setAllSources(Array.from(sourcesSetRef.current.keys()));
+      setAllTags(
+        Array.from(tagsSetRef.current.keys()).map((x) => ({
+          id: x,
+          name: x.split('--')[1],
+          type: x.split('--')[0],
+        })),
+      );
+      setLoaded(true);
+    })();
+  }, []);
+  const tags_all_order_by_type = useMemo(() => {
+    const m = new Map<string, Map<string, Tag>>();
+    allTags.forEach((i) => {
+      const type = i.type;
+      const name = i.name;
+      const id = `${type}--${name}`;
+      if (!m.get(type)) {
+        m.set(type, new Map());
+      }
+
+      m.get(type)!.set(id, { type, name, id } as Tag);
+    });
+    return m;
+  }, [allTags]);
+  const sources_all_sorted = useMemo(() => {
+    return allSources.sort();
+  }, [allSources]);
+
+  const authors_all_sorted = useMemo(() => {
+    return allAuthors.sort();
+  }, [allAuthors]);
 
   const { TagDialog, tagFilter, setTagDialog, setTagFilter, tags } =
-    useTagFilterDialog(tags_all, tags_all_order_by_type);
-  const { DateFilterDialog, dateFilter, showDateFilterDialog } =
-    useDateFiletrDialog();
-  const {
-    authors,
-    authorFilter,
-    setAuthorFilter,
-    AuthorDialog,
-    setAuthorDialog,
-  } = useAuthorFilterDialog(authors_all);
-  const {
-    sources,
-    sourceFilter,
-    setSourceFilter,
-    SourceDialog,
-    setSourceDialog,
-  } = useSourceFilterDialog(sources_all);
+    useTagFilterDialog(allTags, tags_all_order_by_type);
+  const [dateFilter, setDateFilter] = useState<DateFilter>(default_date_filter);
+  const { DateFilterDialog, showDateFilterDialog } = useDateFilterDialog(
+    default_date_filter,
+    (d) => {
+      setDateFilter(d);
+    },
+  );
+
+  const [authorFilter, setAuthorFilter] = useState<string | null>(null);
+  const { AuthorDialog, showAuthorDialog } = useAuthorFilterDialog(
+    authors_all_sorted,
+    (author: string) => {
+      setAuthorFilter(author ? author : null);
+    },
+  );
+
+  const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+  const { SourceDialog, showSourceDialog } = useSourceFilterDialog(
+    sources_all_sorted,
+    (s: string) => {
+      setSourceFilter(s);
+    },
+  );
   const [tipsAnchorEl, setTipsAnchorEl] = useState<HTMLElement | null>(null);
 
   const showTips = (event: React.MouseEvent<HTMLElement>) => {
@@ -265,13 +460,13 @@ export default function Articles({ articles }: { articles: Article[] }) {
 
   const filtered_articles = useMemo(() => {
     return articles
-      .filter((i) => date_include(i, dateFilter))
+      .filter((i) => date_include(i as unknown as Article, dateFilter))
       .filter((i) =>
-        authorFilter ? !!i.authors.find((k) => k.name === authorFilter) : true,
+        authorFilter ? !!i.authors.find((k) => k === authorFilter) : true,
       )
       .filter((i) =>
         sourceFilter
-          ? !!i.publications.find((k) => k.name.indexOf(sourceFilter) > -1)
+          ? !!i.books.find((k) => k.indexOf(sourceFilter) > -1)
           : true,
       )
       .filter((i) =>
@@ -279,6 +474,7 @@ export default function Articles({ articles }: { articles: Article[] }) {
       );
   }, [articles, dateFilter, tagFilter, authorFilter, sourceFilter]);
 
+  if (!ready) return null;
   return (
     <>
       <Head>
@@ -294,8 +490,8 @@ export default function Articles({ articles }: { articles: Article[] }) {
         sx={{ position: 'relative', flex: 1, height: '100%' }}
       >
         <Stack direction="row">
-          <Grid container spacing={1}>
-            <Grid item xs={12} md={5}>
+          <Grid2 container spacing={1}>
+            <Grid2 size={{ md: 5, xs: 12 }}>
               <Stack direction="row" alignItems="center">
                 <Typography variant="body1" sx={{ whiteSpace: 'nowrap' }}>
                   时间范围：
@@ -322,18 +518,19 @@ export default function Articles({ articles }: { articles: Article[] }) {
                   />
                 </Stack>
               </Stack>
-            </Grid>
-            <Grid item xs={12} md={7} sx={{ overflowX: 'scroll' }}>
+            </Grid2>
+            <Grid2 size={{ md: 7, xs: 12 }} sx={{ overflowX: 'scroll' }}>
               <Stack direction="row" alignItems="center">
                 <Typography variant="body1" sx={{ whiteSpace: 'nowrap' }}>
                   标签：
                 </Typography>
                 <Stack direction="row" spacing={1}>
                   {tags.map((i) => {
-                    const isSelected = i.id == tagFilter;
+                    const id = i.id!;
+                    const isSelected = id == tagFilter;
                     return (
                       <Chip
-                        key={i.id}
+                        key={id}
                         label={i.name}
                         variant={isSelected ? 'filled' : 'outlined'}
                         color={isSelected ? 'primary' : 'default'}
@@ -341,7 +538,7 @@ export default function Articles({ articles }: { articles: Article[] }) {
                           isSelected ? () => setTagFilter(null) : undefined
                         }
                         onClick={(e) => {
-                          setTagFilter(i.id);
+                          setTagFilter(id);
                         }}
                       />
                     );
@@ -354,12 +551,16 @@ export default function Articles({ articles }: { articles: Article[] }) {
                   />
                 </Stack>
               </Stack>
-            </Grid>
-            <Grid item xs={12} md={5} sx={{ overflowX: 'scroll' }}>
+            </Grid2>
+            <Grid2 size={{ xs: 12, md: 5 }} sx={{ overflowX: 'scroll' }}>
               <Stack direction="row" alignItems="center">
                 <Typography variant="body1">作者：</Typography>
                 <Stack direction="row" spacing={1}>
-                  {authors.map((i) => {
+                  {Array.from(
+                    new Set(
+                      [...default_authors, authorFilter].filter((i) => i),
+                    ),
+                  ).map((i) => {
                     return (
                       <Chip
                         key={i}
@@ -380,19 +581,23 @@ export default function Articles({ articles }: { articles: Article[] }) {
                   <Chip
                     label={'更多'}
                     onClick={(e) => {
-                      setAuthorDialog(true);
+                      showAuthorDialog();
                     }}
                   />
                 </Stack>
               </Stack>
-            </Grid>
-            <Grid item xs={12} md={6} sx={{ overflowX: 'scroll' }}>
+            </Grid2>
+            <Grid2 size={{ md: 6, xs: 12 }} sx={{ overflowX: 'scroll' }}>
               <Stack direction="row" alignItems="center">
                 <Typography variant="body1" sx={{ whiteSpace: 'nowrap' }}>
                   来源：
                 </Typography>
                 <Stack direction="row" spacing={1}>
-                  {sources.map((i) => {
+                  {Array.from(
+                    new Set(
+                      [...default_sources, sourceFilter].filter((x) => x),
+                    ),
+                  ).map((i) => {
                     const isSelected = i == sourceFilter;
                     return (
                       <Chip
@@ -412,18 +617,13 @@ export default function Articles({ articles }: { articles: Article[] }) {
                   <Chip
                     label={'更多'}
                     onClick={(e) => {
-                      setSourceDialog(true);
+                      showSourceDialog();
                     }}
                   />
                 </Stack>
               </Stack>
-            </Grid>
-            <Grid
-              item
-              xs={1}
-              md={1}
-              sx={{ display: { md: 'flex', xs: 'none' } }}
-            >
+            </Grid2>
+            <Grid2 size={1} sx={{ display: { md: 'flex', xs: 'none' } }}>
               <Popover
                 id="tips"
                 open={!!tipsAnchorEl}
@@ -437,7 +637,7 @@ export default function Articles({ articles }: { articles: Article[] }) {
                   horizontal: 'center',
                 }}
               >
-                <img src="/images/filter.png" width="200" />
+                <img alt="" src="/images/filter.png" width="200" />
                 <Typography sx={{ p: 2 }}>
                   可在每一列右上角添加筛选器进行高级检索
                 </Typography>
@@ -450,50 +650,34 @@ export default function Articles({ articles }: { articles: Article[] }) {
               >
                 高级检索
               </Button>
-            </Grid>
-          </Grid>
+            </Grid2>
+          </Grid2>
         </Stack>
-        <Stack sx={{ flex: 1, width: '100%' }}>
+        {!loaded ? (
+          <LinearProgress variant="determinate" value={progress} />
+        ) : null}
+        <Stack sx={{ flex: 1, width: '100%', height: '500px' }}>
           <DataGridPro
+            apiRef={apiRef}
+            headerFilters
+            disableColumnFilter
             getRowId={(row) => row.id}
             initialState={{
               sorting: {
                 sortModel: [{ field: 'dates', sort: 'asc' }],
               },
-              filter: {
-                filterModel: {
-                  items:
-                    typeof location !== 'undefined' && location.search
-                      ? location.search.startsWith('?tag=')
-                        ? [
-                            {
-                              columnField: 'tags',
-                              value: decodeURIComponent(
-                                location.search.split('=')[1],
-                              ),
-                            },
-                          ]
-                        : location.search.startsWith('?author=')
-                        ? [
-                            {
-                              columnField: 'authors',
-                              value: decodeURIComponent(
-                                location.search.split('=')[1],
-                              ),
-                            },
-                          ]
-                        : []
-                      : [],
-                },
-              },
+              pagination: { paginationModel: { pageSize: 1000 } },
+            }}
+            filterModel={filterModel}
+            onFilterModelChange={(f) => {
+              setFilterModel(f);
+              filterModelRef.current = f;
             }}
             localeText={zhCN.components.MuiDataGrid.defaultProps.localeText}
-            getRowHeight={() => 'auto'}
             rows={filtered_articles}
-            columns={columns}
-            pageSize={100}
-            rowsPerPageOptions={[100]}
-            disableSelectionOnClick
+            columns={columns.current}
+            pagination
+            pageSizeOptions={[20, 100, 1000]}
           />
         </Stack>
       </Stack>

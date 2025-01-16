@@ -30,8 +30,7 @@ import Menu from '@mui/material/Menu';
 import Button from '@mui/material/Button';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
-import { init } from '../../backend/data-source';
-import ImageEntity from '../../backend/entity/image';
+import { Date, GalleryIndexes, PictureMetaData, Tag } from '../../types';
 import Stack from '@mui/material/Stack';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
@@ -44,36 +43,30 @@ import {
   DataGridPro,
   GridColDef,
   GridRenderCellParams,
-  GridValueGetterParams,
-  zhCN,
+  GridValueGetter,
 } from '@mui/x-data-grid-pro';
 import { ensure_two_digits } from '../../utils';
 import ImageTags from '../../components/ImageTags';
+import { readFile } from 'fs-extra';
+import { join } from 'path';
+import { zhCN } from '@mui/x-data-grid/locales';
 
-export const getStaticProps: GetStaticProps = async (
-  context: GetStaticPropsContext,
-) => {
-  const AppDataSource = await init();
-  const images = await AppDataSource.manager.find(ImageEntity, {
-    relations: {
-      tags: true,
-    },
-  });
-  return {
-    props: {
-      images: JSON.parse(JSON.stringify(images)),
-    },
-  };
+const ClickToShow = ({ url }: { url: string }) => {
+  const [clicked, setClicked] = useState(false);
+  return clicked ? (
+    <img alt="" src={url} style={{ width: '100%' }} />
+  ) : (
+    <Button onClick={() => setClicked(true)}>显示</Button>
+  );
 };
-
-const columns: GridColDef<ImageEntity>[] = [
+const columns: GridColDef<PictureMetaData>[] = [
   {
     field: 'url',
     headerName: '预览',
     minWidth: 350,
     flex: 1,
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
-      <img src={params.row!.url} width="100%" />
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
+      <ClickToShow url={params.row!.url} />
     ),
   },
   {
@@ -81,7 +74,7 @@ const columns: GridColDef<ImageEntity>[] = [
     headerName: '名称',
     minWidth: 350,
     flex: 1,
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
       <div>{params.row!.name}</div>
     ),
   },
@@ -90,7 +83,7 @@ const columns: GridColDef<ImageEntity>[] = [
     headerName: '描述',
     minWidth: 150,
     flex: 1,
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
       <div>{params.row.description}</div>
     ),
   },
@@ -98,7 +91,7 @@ const columns: GridColDef<ImageEntity>[] = [
     field: 'source',
     headerName: '来源',
     flex: 1,
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
       <div>{params.row.source}</div>
     ),
   },
@@ -107,17 +100,17 @@ const columns: GridColDef<ImageEntity>[] = [
     headerName: '时间',
     minWidth: 150,
     flex: 1,
-    valueGetter: (params: GridValueGetterParams<ImageEntity, ImageEntity>) =>
-      params.row.year
+    valueGetter: (_, row: Date) =>
+      row.year
         ? [
-            params.row.year || '----',
-            ensure_two_digits(params.row.month, '--'),
-            ensure_two_digits(params.row.day, '--'),
+            row.year || '----',
+            ensure_two_digits(row.month, '--'),
+            ensure_two_digits(row.day, '--'),
           ]
             .filter((j) => j)
             .join('/')
         : '----/--/--',
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
       <Stack spacing={1}>
         <Typography variant="caption">
           {params.row.year
@@ -141,16 +134,27 @@ const columns: GridColDef<ImageEntity>[] = [
     sortComparator: (tags_a: string, tags_b: string) => {
       return tags_a > tags_b ? 1 : -1;
     },
-    valueGetter: (params: GridValueGetterParams<ImageEntity, ImageEntity>) =>
-      params.row.tags.map((i) => i.name).join(','),
-    renderCell: (params: GridRenderCellParams<string, ImageEntity>) => (
+    valueGetter: (tags: Tag[]) => tags.map((i) => i.name).join(','),
+    renderCell: (params: GridRenderCellParams<PictureMetaData>) => (
       <div style={{ overflow: 'visible' }}>
         <ImageTags tags={params.row.tags} />
       </div>
     ),
   },
 ];
-export default function Gallery({ images }: { images: ImageEntity[] }) {
+export default function Gallery() {
+  const [gallery, setGallery] = useState<GalleryIndexes>([]);
+  useEffect(() => {
+    (async () => {
+      setGallery(
+        await (
+          await fetch(
+            'https://raw.githubusercontent.com/banned-historical-archives/banned-historical-archives.github.io/refs/heads/indexes/indexes/gallery.json',
+          )
+        ).json(),
+      );
+    })();
+  }, []);
   return (
     <Stack p={2} sx={{ height: '100%', overflow: 'scroll' }}>
       <Head>
@@ -159,16 +163,14 @@ export default function Gallery({ images }: { images: ImageEntity[] }) {
       <Typography variant="h4" sx={{ mb: 1 }}>
         图库
       </Typography>
-      <Stack sx={{ flex: 1, width: '100%' }}>
+      <Stack sx={{ flex: 1, width: '100%', height: '500px' }}>
         <DataGridPro
           getRowId={(row) => row.id}
-          localeText={zhCN.components.MuiDataGrid.defaultProps.localeText}
           getRowHeight={() => 'auto'}
-          rows={images}
+          rows={gallery}
           columns={columns}
-          pageSize={100}
-          rowsPerPageOptions={[100]}
-          disableSelectionOnClick
+          localeText={zhCN.components.MuiDataGrid.defaultProps.localeText}
+          pageSizeOptions={[100]}
         />
       </Stack>
     </Stack>

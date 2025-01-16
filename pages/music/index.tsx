@@ -1,4 +1,20 @@
-import React, { ReactElement, useEffect, useRef, useState } from 'react';
+import { EventEmitter } from 'events';
+import React, {
+  ReactElement,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useState,
+} from 'react';
+import {
+  DataGridPro,
+  GridColDef,
+  GridFilterModel,
+  GridRenderCellParams,
+  GridValueGetter,
+  useGridApiRef,
+} from '@mui/x-data-grid-pro';
 import Head from 'next/head';
 import { diff_match_patch, Diff } from 'diff-match-patch';
 import Popover from '@mui/material/Popover';
@@ -30,8 +46,13 @@ import Menu from '@mui/material/Menu';
 import Button from '@mui/material/Button';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
-import { init } from '../../backend/data-source';
-import MusicEntity from '../../backend/entity/music';
+import {
+  Music as MusicEntity,
+  MusicIndexes,
+  MusicIndex,
+  MusicLyric,
+  Tag,
+} from '../../types';
 import Stack from '@mui/material/Stack';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
@@ -40,83 +61,114 @@ import Typography from '@mui/material/Typography';
 import PauseCircleIcon from '@mui/icons-material/PauseCircle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { DiffViewer } from '../../components/DiffViewer';
+import { readFile } from 'fs-extra';
+import { join } from 'path';
+import { Chip, Grid2, Skeleton } from '@mui/material';
+import { GridApiPro } from '@mui/x-data-grid-pro/models/gridApiPro';
+import Tags from '../../components/Tags';
+import { zhCN } from '@mui/x-data-grid/locales';
 
-export const getStaticProps: GetStaticProps = async (
-  context: GetStaticPropsContext,
-) => {
-  const AppDataSource = await init();
-  const music = await AppDataSource.manager.find(MusicEntity, {
-    relations: {
-      lyrics: {
-        audios: true,
-      },
-    },
-  });
-  return {
-    props: {
-      music: JSON.parse(JSON.stringify(music)),
-    },
-  };
+const getDetails = async (
+  id: string,
+  archives_id: number,
+): Promise<MusicEntity> => {
+  const url = `https://raw.githubusercontent.com/banned-historical-archives/banned-historical-archives${archives_id}/parsed/${id.substr(
+    0,
+    3,
+  )}/${id}/${id}.metadata`;
+  const res = (await (await fetch(url)).json()) as MusicEntity;
+  return res;
 };
 
 function Song({
-  song,
-  setPlayingName,
-  setPlaying,
+  ee,
+  id,
+  archiveId,
+  name,
 }: {
-  song: MusicEntity;
-  setPlayingName: Function;
-  setPlaying: Function;
+  ee: EventEmitter;
+  name: string;
+  archiveId: number;
+  id: string;
 }) {
-  const [lyricLeft, setLyricLeft] = useState(song.lyrics[0].id);
-  const [lyricRight, setLyricRight] = useState(
-    song.lyrics[song.lyrics.length - 1].id,
+  const [lyricLeft, setLyricLeft] = useState(0);
+  const [lyricRight, setLyricRight] = useState(0);
+  const [details, setDetails] = useState<MusicEntity>();
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getDetails(id, archiveId).then((res) => {
+      setLoading(false);
+      setDetails(res);
+      setLyricRight(res.lyrics.length - 1);
+    });
+  }, []);
+
+  const leftContents = useMemo(
+    () =>
+      (details?.lyrics[lyricLeft] || details?.lyrics[0])?.content.split('\n'),
+    [lyricLeft, details],
   );
-  const leftContents = song.lyrics
-    .find((i) => i.id === lyricLeft)!
-    .content.split('\n');
-  const rightContents = song.lyrics
-    .find((i) => i.id === lyricRight)!
-    .content.split('\n');
+  const rightContents = useMemo(
+    () =>
+      (details?.lyrics[lyricRight] || details?.lyrics[0])?.content.split('\n'),
+    [lyricRight, details],
+  );
+  const diff: Diff[][] = useMemo(() => {
+    if (!details) return [];
+    const left = details?.lyrics[lyricLeft] || details?.lyrics[0];
+    const right = details?.lyrics[lyricRight] || details?.lyrics[0];
+    const leftContents = left.content.split('\n');
+    const rightContents = right!.content.split('\n');
+    let i = 0;
+    const max_len = Math.max(leftContents.length, rightContents.length);
 
-  let i = 0;
-  const max_len = Math.max(leftContents.length, rightContents.length);
-  const diff: Diff[][] = [];
-  while (i < max_len) {
-    const a = leftContents[i] || '';
-    const b = rightContents[i] || '';
-    diff.push(new diff_match_patch().diff_main(a, b));
-    ++i;
-  }
+    const res: Diff[][] = [];
+    while (i < max_len) {
+      const a = leftContents[i] || '';
+      const b = rightContents[i] || '';
+      res.push(new diff_match_patch().diff_main(a, b));
+      ++i;
+    }
+    return res;
+  }, [lyricLeft, lyricRight, details]);
 
+  if (loading)
+    return (
+      <Stack padding="20px" spacing="10px">
+        <Skeleton variant="rectangular" width={'100%'} height={20} />
+        <Skeleton variant="rectangular" width={'100%'} height={20} />
+        <Skeleton variant="rectangular" width={'100%'} height={20} />
+        <Skeleton variant="rectangular" width={'100%'} height={20} />
+      </Stack>
+    );
   return (
-    <Accordion disableGutters>
-      <AccordionSummary expandIcon={<ExpandMoreIcon />} id={song.id}>
-        <Typography variant="h6">{song.name}</Typography>
-      </AccordionSummary>
-      <AccordionDetails>
-        <Divider />
-        <Typography variant="subtitle1" sx={{ mt: 2, mb: 2 }}>
+    <Stack padding="20px">
+      <Paper sx={{ flex: 1, mx: 'auto', p: '20px', width: '100%' }}>
+        <Typography variant="subtitle1" sx={{ mb: 2 }}>
           演唱/演奏版本：
         </Typography>
         <Stack>
-          {song.lyrics.map((lyric) => (
-            <Stack key={lyric.id} sx={{ display: 'inline' }}>
-              {lyric.audios.map((audio) => {
-                const name = `${song.name}-${lyric.version}-${
-                  audio.artist || '未知'
+          {details?.lyrics.map((lyric, idx) => (
+            <Stack key={idx} sx={{ display: 'inline' }}>
+              {lyric.audios.map((audio, aid) => {
+                const displayName = `${details?.name}-${lyric.version}-${
+                  audio.artists.map((i) => `${i.name}(${i.type})`).join(' ') ||
+                  '未知'
                 }`;
                 return (
                   <Button
-                    key={audio.id}
+                    key={idx + '-' + aid}
                     sx={{ justifyContent: 'start' }}
                     startIcon={<PlayCircleIcon />}
                     onClick={() => {
-                      setPlayingName(name);
-                      setPlaying(true);
+                      ee.emit('musicChanged', id, name, archiveId);
+                      ee.emit('lyricChanged', lyric);
+                      ee.emit('artistChanged', audio.artists);
+                      ee.emit('musicStart', audio.url);
                     }}
                   >
-                    {name}
+                    {displayName}
                   </Button>
                 );
               })}
@@ -124,7 +176,7 @@ function Song({
           ))}
         </Stack>
         <Divider sx={{ mt: 2 }} />
-        {song.lyrics.length > 1 ? (
+        {details?.lyrics.length && details?.lyrics.length > 1 ? (
           <Typography variant="subtitle1" sx={{ mt: 2, mb: 2 }}>
             歌词对比：
           </Typography>
@@ -133,59 +185,65 @@ function Song({
           <Stack sx={{ flex: 1 }}>
             <Select
               size="small"
-              value={lyricLeft}
+              value={details?.lyrics[lyricLeft] ? lyricLeft : 0}
               label="版本"
-              sx={{ mb: 1 }}
+              sx={{
+                mb: 1,
+                display:
+                  details?.lyrics.length && details?.lyrics.length > 1
+                    ? 'block'
+                    : 'none',
+              }}
               onChange={(e) => {
-                setLyricLeft(e.target.value);
+                setLyricLeft(parseInt(e.target.value as string));
               }}
             >
-              {song.lyrics.map((lyric) => (
-                <MenuItem key={lyric.id} value={lyric.id}>
+              {details?.lyrics.map((lyric, idx) => (
+                <MenuItem key={idx} value={idx}>
                   {lyric.version}
                 </MenuItem>
               ))}
             </Select>
-            <Stack>
-              {leftContents.map((line, idx) => (
+            <Paper sx={{ p: '20px' }}>
+              {leftContents?.map((line, idx) => (
                 <Typography key={idx}>{line}</Typography>
               ))}
-            </Stack>
+            </Paper>
           </Stack>
-          {song.lyrics.length > 1 ? (
+          {details?.lyrics.length && details?.lyrics.length > 1 ? (
             <>
               <Stack sx={{ flex: 1 }}>
                 <Select
                   size="small"
-                  value={lyricRight}
+                  value={details?.lyrics[lyricRight] ? lyricRight : 0}
                   label="版本"
                   sx={{ mb: 1 }}
                   onChange={(e) => {
-                    setLyricRight(e.target.value);
+                    setLyricRight(parseInt(e.target.value as string));
                   }}
                 >
-                  {song.lyrics.map((lyric) => (
-                    <MenuItem key={lyric.id} value={lyric.id}>
+                  {details?.lyrics.map((lyric, idx) => (
+                    <MenuItem key={idx} value={idx}>
                       {lyric.version}
                     </MenuItem>
                   ))}
                 </Select>
-                <Stack>
-                  {rightContents.map((line, idx) => (
+                <Paper sx={{ p: '20px' }}>
+                  {rightContents?.map((line, idx) => (
                     <Typography key={idx}>{line}</Typography>
                   ))}
-                </Stack>
+                </Paper>
               </Stack>
-              <Stack sx={{ flex: 1 }}>
-                <Stack>
+              <Stack sx={{ flex: 1, pt: '48px' }}>
+                <Paper sx={{ p: '20px' }}>
                   <DiffViewer diff={diff} />
-                </Stack>
+                </Paper>
               </Stack>
             </>
           ) : null}
         </Stack>
-      </AccordionDetails>
-    </Accordion>
+      </Paper>
+    </Stack>
   );
 }
 
@@ -196,72 +254,131 @@ enum RepeatType {
 }
 
 function Player({
-  music,
-  playing,
-  playingName,
-  setPlaying,
-  setPlayingName,
-  playlist,
-  repeatType,
-  setRepeatType,
+  apiRef,
+  ee,
 }: {
-  repeatType: RepeatType;
-  setRepeatType: Function;
-  music: MusicEntity[];
-  playlist: PlayList;
-  playingName: string;
-  playing: boolean;
-  setPlaying: Function;
-  setPlayingName: Function;
+  apiRef: React.MutableRefObject<GridApiPro>;
+  ee: EventEmitter;
 }) {
-  const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
+  const [playing, setPlaying] = useState(false);
 
-  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
-  };
+  const [repeatType, setRepeatType] = useState(RepeatType.shuffle);
 
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
+  const [songName, setSongName] = useState('');
+  const [versionName, setVersionName] = useState('');
+  const [artistName, setArtistName] = useState('');
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const curId = useRef('');
+
+  useEffect(() => {
+    function lyricChanged(lyric: MusicLyric) {
+      setVersionName(lyric.version);
+    }
+    function artistChanged(artists: { name: string; type: string }[]) {
+      setArtistName(artists.map((i) => `${i.name}(${i.type})`).join(' '));
+    }
+    function musicChanged(
+      id: string,
+      name: string,
+      archiveId: number,
+      lyricIndex?: number, // -1 -> random
+      audioIndex?: number, // -1 -> random
+      autoplay?: boolean,
+    ) {
+      ee.emit('musicPause');
+      setSongName(name);
+      curId.current = id;
+      if (lyricIndex != undefined)
+        getDetails(id, archiveId).then((first) => {
+          if (lyricIndex == -1) {
+            lyricIndex = Math.floor(Math.random() * first.lyrics.length);
+          }
+          ee.emit('lyricChanged', first.lyrics[lyricIndex!]);
+          if (audioIndex != undefined) {
+            if (audioIndex == -1) {
+              audioIndex = Math.floor(
+                Math.random() * first.lyrics[lyricIndex!].audios.length,
+              );
+            }
+            ee.emit(
+              'artistChanged',
+              first.lyrics[lyricIndex!].audios[audioIndex].artists,
+            );
+            if (autoplay) {
+              ee.emit(
+                'musicStart',
+                first.lyrics[lyricIndex!].audios[audioIndex].url,
+              );
+            } else {
+              audioRef.current?.setAttribute(
+                'src',
+
+                first.lyrics[lyricIndex!].audios[audioIndex].url,
+              );
+            }
+          }
+        });
+    }
+    function musicPause() {
+      setPlaying(false);
+      audioRef.current?.pause();
+    }
+    function musicStart(url: string) {
+      setPlaying(true);
+      audioRef.current?.setAttribute('src', url);
+      audioRef.current?.play().catch(() => {});
+    }
+    ee.on('musicPause', musicPause);
+    ee.on('musicStart', musicStart);
+    ee.on('artistChanged', artistChanged);
+    ee.on('musicChanged', musicChanged);
+    ee.on('lyricChanged', lyricChanged);
+    return () => {
+      ee.off('musicPause', musicPause);
+      ee.off('musicStart', musicStart);
+      ee.off('artistChanged', artistChanged);
+      ee.off('musicChanged', musicChanged);
+      ee.off('lyricChanged', lyricChanged);
+    };
+  }, []);
+
+  const playNext = useCallback(async () => {
+    if (repeatType === RepeatType.one) {
+      audioRef.current?.play().catch(() => {});
+    } else if (repeatType === RepeatType.all) {
+      const sorted = apiRef.current
+        .getSortedRowIds()
+        .filter((i) => apiRef.current.state.visibleRowsLookup[i]);
+      let idx = apiRef.current.getRowIndexRelativeToVisibleRows(curId.current);
+      if (sorted.length - 1 == idx) {
+        idx = 0;
+      } else if (idx >= 0) {
+        idx++;
+      } else {
+        idx = 0;
+      }
+      const row = apiRef.current.getRow(sorted[idx]);
+      ee.emit('musicChanged', row.id, row.name, row.archiveId, 0, 0, true);
+    } else if (repeatType === RepeatType.shuffle) {
+      const row_ids = Object.keys(
+        apiRef.current.state.visibleRowsLookup,
+      ).filter((i) => apiRef.current.state.visibleRowsLookup[i]);
+
+      const m = Math.floor(row_ids.length * Math.random());
+      const row = apiRef.current.getRow(row_ids[m]);
+      ee.emit('musicChanged', row.id, row.name, row.archiveId, -1, -1, true);
+    }
+  }, [apiRef, repeatType]);
+
   return (
     <>
-      <Popover
-        id="music-list"
-        open={!!anchorEl}
-        anchorEl={anchorEl}
-        disableRestoreFocus
-        anchorOrigin={{
-          vertical: 'top',
-          horizontal: 'right',
+      <audio
+        ref={audioRef}
+        onEnded={() => {
+          playNext();
         }}
-        transformOrigin={{
-          vertical: 'bottom',
-          horizontal: 'right',
-        }}
-        PaperProps={{
-          onMouseLeave: () => handleClose(),
-          style: { transform: 'translateX(-10px)' },
-        }}
-      >
-        {Object.keys(playlist).map((i) => (
-          <Typography
-            key={i}
-            sx={{
-              p: 2,
-              wordWrap: 'nowrap',
-              cursor: 'pointer',
-              color: i === playingName ? '#cc0000' : 'inherit',
-            }}
-            onClick={() => {
-              handleClose();
-              setPlayingName(i);
-              setPlaying(true);
-            }}
-          >
-            {i}
-          </Typography>
-        ))}
-      </Popover>
+        style={{ position: 'fixed', left: '100%' }}
+      />
       <Box
         sx={{
           bottom: 30,
@@ -286,8 +403,6 @@ function Player({
             zIndex: 10,
             right: 70,
           }}
-          onClick={handleClick}
-          onMouseEnter={handleClick}
         >
           <Typography
             sx={{
@@ -300,30 +415,26 @@ function Player({
               },
             }}
           >
-            {playingName}
+            {songName}-{versionName}-{artistName}
           </Typography>
         </Paper>
         <SpeedDial
           ariaLabel="player"
           sx={{ position: 'absolute', bottom: 16, right: 16 }}
-          onClick={() => setPlaying(!playing)}
+          onClick={() => {
+            if (playing) ee.emit('musicPause');
+            else {
+              setPlaying(true);
+              audioRef.current?.play().catch(() => {});
+            }
+          }}
           icon={playing ? <PauseCircleIcon /> : <PlayCircleIcon />}
         >
           <SpeedDialAction
             icon={<SkipNextIcon />}
             onClick={(e) => {
               e.stopPropagation();
-              if (repeatType === RepeatType.shuffle) {
-                const keys = Object.keys(playlist);
-                const idx = keys.findIndex((i) => i === playingName);
-                let t = 0;
-                while (t === idx) t = Math.floor(Math.random() * keys.length);
-                setPlayingName(keys[t]);
-              } else {
-                const keys = Object.keys(playlist);
-                const idx = keys.findIndex((i) => i === playingName);
-                setPlayingName(keys[idx + 1 < keys.length ? idx + 1 : 0]);
-              }
+              playNext();
             }}
             tooltipTitle={'下一首'}
           />
@@ -375,42 +486,227 @@ function Player({
     </>
   );
 }
-type PlayList = { [key: string]: string };
-export default function Music({ music }: { music: MusicEntity[] }) {
-  const [playing, setPlaying] = useState(false);
-  const [repeatType, setRepeatType] = useState(RepeatType.shuffle);
-  const [playingName, setPlayingName] = useState(
-    `${music[0].name}-${music[0].lyrics[0].version}-${
-      music[0].lyrics[0].audios[0].artist || '未知'
-    }`,
+
+type Column = {
+  id: string;
+  archiveId: number;
+  name: string;
+  nLyrics: number;
+  tags: string[];
+  composers: string[];
+  lyricists: string[];
+  artists: { name: string; type: string }[];
+  sources: string[];
+  art_forms: string[];
+};
+export default function Music() {
+  const ee = useRef(new EventEmitter());
+  ee.current.setMaxListeners(9876543);
+  const filterModelRef = useRef<GridFilterModel>({ items: [] });
+  const [indexes, setIndexes] = useState<Column[]>([]);
+  const apiRef = useGridApiRef();
+  useEffect(() => {
+    (async () => {
+      const data = await (
+        await fetch(
+          'https://raw.githubusercontent.com/banned-historical-archives/banned-historical-archives.github.io/refs/heads/indexes/indexes/music.json',
+        )
+      ).json();
+      setIndexes(
+        data.map((i: any) => ({
+          id: i[0],
+          name: i[1],
+          archiveId: i[2],
+          tags: i[4],
+          nLyrics: i[3],
+          composers: i[5],
+          art_forms: i[9],
+          lyricists: i[6],
+          artists: i[7],
+          sources: i[8],
+        })),
+      );
+      setTimeout(() => {
+        const rows = apiRef.current.getSortedRows();
+        const row = rows[0];
+        ee.current.emit('musicChanged', row.id, row.name, row.archiveId, 0, 0);
+      }, 500);
+    })();
+  }, []);
+  const buildHeaderOnClick = useCallback((field: string) => {
+    return (t: Tag) => {
+      const newFilter: GridFilterModel = {
+        ...filterModelRef.current,
+        items: [
+          ...filterModelRef.current.items.filter((i) => i.field != field),
+          {
+            id: field,
+            field: field,
+            operator: 'contains',
+            value: t.name,
+          },
+        ],
+      };
+      apiRef.current.setFilterModel(newFilter);
+      filterModelRef.current = newFilter;
+    };
+  }, []);
+  const columns: GridColDef<Column>[] = useMemo(
+    () => [
+      {
+        field: 'name',
+        headerName: '名称',
+        minWidth: 250,
+        flex: 1,
+        valueGetter: (name: string) => name,
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return params.row.name;
+        },
+      },
+      {
+        field: 'composers',
+        headerName: '作曲',
+        minWidth: 150,
+        valueGetter: (_: any, row: Column) => row.composers.join(','),
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.composers.map((i) => ({
+                  name: i,
+                  type: 'composer',
+                }))}
+                onClick={buildHeaderOnClick('composers')}
+              />
+            </div>
+          );
+        },
+      },
+      {
+        field: 'lyricists',
+        headerName: '作词',
+        valueGetter: (_: any, row: Column) => row.lyricists.join(','),
+        minWidth: 150,
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.lyricists.map((i) => ({
+                  name: i,
+                  type: 'lyricist',
+                }))}
+                onClick={buildHeaderOnClick('lyricists')}
+              />
+            </div>
+          );
+        },
+      },
+      {
+        field: 'artists',
+        headerName: '艺术家',
+        valueGetter: (_: any, row: Column) =>
+          row.artists.map((i) => i.name).join(','),
+        minWidth: 150,
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.artists.map((i) => ({
+                  name: i.name,
+                  type: i.type,
+                }))}
+                onClick={buildHeaderOnClick('artists')}
+              />
+            </div>
+          );
+        },
+      },
+      {
+        field: 'sources',
+        headerName: '来源',
+        valueGetter: (_: any, row: Column) => row.sources.join(','),
+        minWidth: 150,
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.sources.map((i) => ({
+                  name: i,
+                  type: 'source',
+                }))}
+                onClick={buildHeaderOnClick('sources')}
+              />
+            </div>
+          );
+        },
+      },
+      {
+        field: 'art_forms',
+        headerName: '艺术形式',
+        minWidth: 150,
+        valueGetter: (_: any, row: Column) => row.art_forms.join(','),
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.art_forms.map((i) => ({
+                  name: i,
+                  type: 'art_form',
+                }))}
+                onClick={buildHeaderOnClick('art_forms')}
+              />
+            </div>
+          );
+        },
+      },
+      {
+        field: 'nLyrics',
+        headerName: '歌词版本数量',
+        minWidth: 150,
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return params.row.nLyrics;
+        },
+      },
+      {
+        field: 'tags',
+        headerName: '标签',
+        minWidth: 200,
+        valueGetter: (_: any, row: Column) => row.tags.join(','),
+        renderCell: (params: GridRenderCellParams<Column>) => {
+          return (
+            <div style={{ overflow: 'scroll', height: '100%' }}>
+              <Tags
+                tags={params.row.tags.map((i) => ({
+                  name: i,
+                  type: 'tag',
+                }))}
+                onClick={buildHeaderOnClick('tags')}
+              />
+            </div>
+          );
+        },
+      },
+    ],
+    [],
   );
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  const playlist: PlayList = {};
-  for (const m of music) {
-    for (const l of m.lyrics) {
-      for (const a of l.audios) {
-        const name = `${m.name}-${l.version}-${a.artist || '未知'}`;
-        playlist[name] = a.url;
-      }
-    }
-  }
 
   useEffect(() => {
-    if (!audioRef.current) return;
-    if (playing) {
-      audioRef.current.play().catch(() => {});
-    } else {
-      audioRef.current.pause();
-    }
-  }, [playing]);
+    function onChange(id: string) {
+      const idx = apiRef.current.getRowIndexRelativeToVisibleRows(id);
 
-  useEffect(() => {
-    if (!audioRef.current) return;
-    if (!playing) return;
-    audioRef.current.src = playlist[playingName];
-    audioRef.current.play().catch(() => {});
-  }, [playingName, playing, playlist]);
+      try {
+        apiRef.current.scrollToIndexes({
+          colIndex: 0,
+          rowIndex: idx,
+        });
+        apiRef.current.setExpandedDetailPanels([id]);
+      } catch (e) {}
+    }
+    ee.current.on('musicChanged', onChange);
+    return () => {
+      ee.current.off('musicChanged', onChange);
+    };
+  }, []);
 
   return (
     <Stack p={2} sx={{ height: '100%', overflow: 'scroll' }}>
@@ -420,47 +716,37 @@ export default function Music({ music }: { music: MusicEntity[] }) {
       <Typography variant="h4" sx={{ mb: 1 }}>
         音乐
       </Typography>
-      <Typography variant="body1" sx={{ mb: 1 }}>
-        多媒体资料包括音乐及歌词、电影、照片、录音等。目前主要收录社会主义中国创作的红色音乐。
-      </Typography>
-      <audio
-        ref={audioRef}
-        onEnded={() => {
-          if (repeatType === RepeatType.one) {
-            audioRef.current!.play().catch(() => {});
-          } else if (repeatType === RepeatType.all) {
-            const keys = Object.keys(playlist);
-            const idx = keys.findIndex((i) => i === playingName);
-            setPlayingName(keys[idx + 1 < keys.length ? idx + 1 : 0]);
-          } else if (repeatType === RepeatType.shuffle) {
-            const keys = Object.keys(playlist);
-            const idx = keys.findIndex((i) => i === playingName);
-            let t = 0;
-            while (t === idx) t = Math.floor(Math.random() * keys.length);
-            setPlayingName(keys[t]);
-          }
-        }}
-        src={playlist[playingName]}
-        style={{ position: 'fixed', left: '100%' }}
-      />
-      <Player
-        music={music}
-        playing={playing}
-        playlist={playlist}
-        repeatType={repeatType}
-        setPlaying={setPlaying}
-        setRepeatType={setRepeatType}
-        setPlayingName={setPlayingName}
-        playingName={playingName}
-      />
-      {music.map((i) => (
-        <Song
-          key={i.id}
-          song={i}
-          setPlayingName={setPlayingName}
-          setPlaying={setPlaying}
+      <Player ee={ee.current} apiRef={apiRef} />
+      <Stack sx={{ flex: 1, width: '100%', height: '500px' }}>
+        <DataGridPro
+          disableColumnFilter
+          headerFilters
+          apiRef={apiRef}
+          initialState={{
+            sorting: {
+              sortModel: [{ field: 'nLyrics', sort: 'desc' }],
+            },
+          }}
+          getDetailPanelContent={({ row }) => (
+            <Song
+              id={row.id}
+              name={row.name}
+              archiveId={row.archiveId}
+              ee={ee.current}
+            />
+          )}
+          onFilterModelChange={(f) => {
+            apiRef.current.setFilterModel(f);
+            filterModelRef.current = f;
+          }}
+          getRowId={(row) => row.id}
+          getDetailPanelHeight={() => 'auto'}
+          rows={indexes}
+          columns={columns}
+          localeText={zhCN.components.MuiDataGrid.defaultProps.localeText}
+          pageSizeOptions={[100]}
         />
-      ))}
+      </Stack>
     </Stack>
   );
 }
